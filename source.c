@@ -16,7 +16,7 @@
 #define CONTROL_WRITE 0x0F							// CONTROL REGISTER USED TO DEFINED THE WP BIT
 #define SLAVE_SELECT LATCbits.LATC6					// SLAVE SELECT PIN IS CONNECTED TO RC6
 
-unsigned char bytes[] = {0x50, 0x59, 0x23, 0x31, 0x12, 0x07, 0x24, 0x00}, p = 0;	// THIS ARRAY SAVES THE VALUES OF RTC WHEN A READ OCCURS
+volatile unsigned char bytes[] = {0x50, 0x59, 0x23, 0x31, 0x12, 0x07, 0x24, 0x00}, p = 0;	// THIS ARRAY SAVES THE VALUES OF RTC WHEN A READ OCCURS
 unsigned char days[7][20] = {"SUN,", "MON,", "TUE,", "WED,", "THU,", "FRI,", "SAT,"};	// THIS ARRAY CONTAINS ABBREVIATION OF DAYS NAME
 unsigned char stat = 0;
 
@@ -72,18 +72,20 @@ void interruptFunction(void)
 		clearHome();
 		if(device == ADC)
 		{
+			SLAVE_SELECT = 1;
 			PIE1bits.SSPIE = 0;			
 			PIR1bits.SSPIF = 0;
-			SLAVE_SELECT = 1;
 			PIE1bits.ADIE = 1;			
 			PIR1bits.ADIF = 0;
 			capacitorTime();
 			ADCON0bits.GO = 1;
 			device = SPI;
 		}
-		else
+		else if(device == SPI)
 		{
-			PIE1bits.ADIE = 0;			
+			device = ADC;
+			PIE1bits.ADIE = 0;
+			p = 0;			
 			PIR1bits.ADIF = 0;
 			PIE1bits.SSPIE = 1;			
 			PIR1bits.SSPIF = 0;		
@@ -95,10 +97,9 @@ void interruptFunction(void)
 			}
 			else
 				SSPBUF = CLOCK_BURST_READ;
-			device = ADC;
 		}
-		TMR0H = 0xB3;
-		TMR0L = 0xB4;
+		TMR0H = 0xC2;
+		TMR0L = 0xF7;
 		INTCONbits.TMR0IF = 0;
 		T0CONbits.TMR0ON = 1;
 	}
@@ -146,9 +147,10 @@ void interruptFunction(void)
 						PIR1bits.SSPIF = 1;		// TRIGGER A SOFTWARE SPI INTERRUPT 
 					else
 					{
-						reg = DUMMY;
 						SLAVE_SELECT = 1;		// DISCONNECTED THE SLAVE
 						p = 0;
+						spiState = READ;
+						reg = DUMMY;
 						displayResult();		// DISPLAY DATA INTO LCD		
 						SLAVE_SELECT = 0;						
 						SSPBUF = CLOCK_BURST_READ;
@@ -182,20 +184,17 @@ void main(void)
 	INTCONbits.TMR0IE = 1;
 	INTCONbits.TMR0IF = 0;
 	INTCONbits.PEIE = 1;
-	T0CON = 0x07;
-	TMR0H = 0xB3;
-	TMR0L = 0xB4;
+	T0CON = 0x06;
+	TMR0H = 0xC2;
+	TMR0L = 0xF7;
 	T0CONbits.TMR0ON = 1;
-	PIE1bits.ADIE = 1;			
-	PIR1bits.ADIF = 0;
-	capacitorTime();
-	ADCON0bits.GO = 1;
 	while(TRUE);
 }
 void displayTemperature(void)
 {
 	static unsigned char state = 0;
-	static float newTemp = 0, oldTemp = 0;
+	static float oldTemp = 0.0;
+	float newTemp = 0.0;
 	result.byte[0] = ADRESL;
 	result.byte[1] = ADRESH;	
 	if(!state)
@@ -238,9 +237,12 @@ void clearHome(void)
 	LATD = 0x01;
 	command();
 	T1CON = 0x00;
-	TMR1H = 0xEC;
-	TMR1L = 0x78;
+	TMR1H = 0xF9;
+	TMR1L = 0x98;
 	timerOne();
+	LATD = 0x80;
+	command();
+	busyFlag();
 }
 void displayData(unsigned int value)
 {
